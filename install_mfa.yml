@@ -1,0 +1,152 @@
+---
+- name: install packages
+  hosts: 127.0.0.1
+  connection: local
+    
+  tasks:
+    - setup:
+       filter: ansible_distribution*
+
+    - meta: end_host
+      when: ansible_distribution_major_version=='2023'
+
+    - name: ansible_distro
+      debug:
+       msg: "{{ansible_distribution_major_version }} is version"
+    - shell: yum-complete-transaction --cleanup-only
+      when: (ansible_distribution=='RedHat' and ansible_distribution_major_version=='7') or
+            (ansible_distribution=='Amazon' and ansible_distribution_major_version!='2023')
+
+    - set_fact:
+        sshdname: sshd
+        sshd_configname: sshd_config
+        opensslversion: openssl-devel
+        pamversion: pam-devel
+      when: (ansible_distribution=='RedHat') or
+            (ansible_distribution=='Amazon')
+
+    - set_fact:
+        sshdname: sshd_rhel6
+        sshd_configname: sshd_config_rhel6
+        opensslversion: openssl
+        pamversion: pam
+      when: ansible_distribution=='RedHat' and ansible_distribution_major_version=='6'
+
+    - name: update yum modules 
+      shell: yum install -y "{{ item }}"
+      with_items:
+          - openssl-devel
+          - pam-devel
+          - gcc
+          - bzip2
+      when: (ansible_distribution=='RedHat') or
+            (ansible_distribution=='Amazon')
+
+    - name: update yum modules
+      shell: yum install -y "{{ item }}"
+      with_items:
+          - gcc
+          - bzip2
+          - openssl-devel.x86_64 
+          - pam-devel.x86_64 
+      when: ansible_distribution=='RedHat' and ansible_distribution_major_version=='6'
+      
+    - name: create linux_admin_script folder 
+      file: path=/root/linux_admin_script/ state=directory 
+
+    - set_fact:
+        duo_file: /tmp/duo_unix-2.0.1.tar.gz
+        duo_dir: /root/linux_admin_script/duo_unix-2.0.1
+    
+    - set_fact:
+        pam_duo: /etc/pam_duo.conf
+    
+    - debug:
+        msg: "{{ pam_duo }}"
+    
+    - debug:
+        msg: "{{ duo_file }}"
+
+    - name: Creates directory
+      file: 
+        path: /root/linux_admin_script/duo_unix
+        state: directory
+        mode: 0755
+
+    - name: downoad pam file
+      unarchive:
+        src: "{{ duo_file }}"
+#https://dl.duosecurity.com/duo_unix-latest.tar.gz
+        dest: /root/linux_admin_script/
+        #remote_src: yes
+
+    - name: Build duo  
+      shell: 'cd {{ duo_dir }};./configure --with-pam --prefix=/usr && make && sudo make install'
+      register : duo1_p
+
+    - debug:
+       msg: "{{ duo1_p }}"
+
+
+    - name: move sshd_config 
+      copy:    
+        src: /root/ansible/files/{{ sshd_configname }}
+        dest: /etc/ssh/sshd_config 
+        backup: yes
+        mode: 644
+    
+    - name: move sshd
+      copy:    
+        src: /root/ansible/files/{{sshdname}}
+        dest: /etc/pam.d/sshd 
+        backup: yes
+        mode: 644
+
+    - name: move pam_duo
+      copy:
+        src: /root/ansible/files/pam_duo.conf
+        dest: "{{ pam_duo }}"
+        backup: yes
+        mode: 644
+ 
+    #- name: move system-auth
+    #  copy: 
+    #    src: system-auth
+    #    dest: /etc/pam.d/system-auth
+    #    backup: yes
+    #    mode: 644
+    #    
+    - name: Build duo-semodule
+      shell: 'cd {{ duo_dir }};sudo make -C pam_duo semodule'
+      register: semodule1
+
+    - debug:
+       msg: "{{ semodule1 }}"
+   
+
+    - name: Build duo-semodule
+      shell: 'cd {{ duo_dir }};sudo make -C pam_duo semodule-install'
+      register: semodule2
+
+    - debug:
+       msg: "{{ semodule2 }}"
+
+    # - shell: semodule -l | grep duo
+    #   register: sethere
+
+    # - debug: var=sethere
+    - name: Build duo
+      shell: 'cd {{ duo_dir }};sudo make install'
+      register : duo1_p
+      ignore_errors: True
+
+    # To keep compatible with Amazon Linux
+    - name: restart sshd
+      shell: service sshd restart
+      ignore_errors: True
+      when: (ansible_distribution=='RedHat') or
+            (ansible_distribution=='Amazon')
+   
+    - name: restart sshd rhel6
+      shell: service sshd restart
+      when: ansible_distribution=='RedHat' and ansible_distribution_major_version=='6'

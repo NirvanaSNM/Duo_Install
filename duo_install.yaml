@@ -1,0 +1,59 @@
+# code: language=ansible
+
+- name: Duo Install on Linux Hosts
+  hosts: "{{ reachable_hosts | default('all') }}"
+  become: yes
+  gather_facts: no
+
+# Set vars for new versions:
+  vars:
+    duo_version: 2.0.1
+    duo_installation_path: /root/linux_admin_script/duo_unix-2.0.1
+    duo_installation_files: #Files in ./files/duo_install/
+      - duo_unix-2.0.1.tar.gz
+      - install_mfa.yml
+    duo_installation_playbook: /tmp/install_mfa.yml
+
+  tasks:
+    - name: Check if Duo version folder is present
+      stat:
+        path: "{{ duo_installation_path }}"
+      register: duo_folder_status
+
+    - block:
+        - name: Deploy Duo installation files
+          copy:
+            src: "./files/duo_install/{{ item }}"
+            dest: "/tmp/{{ item }}"
+            owner: root
+            group: root
+            mode: "0700"
+            force: yes
+          loop: "{{ duo_installation_files }}"
+
+        - name: Remove existing Duo client and configuration
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/duo/login_duo.conf
+            - /usr/sbin/login_duo
+            - /usr/lib/libduo.*
+            - /etc/duo
+            - /etc/duo/pam_duo.conf
+            - /lib64/security/pam_duo.so
+  
+        - name: Run Ansible playbook for MFA installation
+          import_playbook: "{{duo_installation_playbook}}"
+          
+      when: not (duo_folder_status is defined and duo_folder_status.stat.exists)
+
+    - name: Check if duo_unix folder is present for CMDB
+      stat:
+        path: "{{duo_installation_path}}"
+      register: duo_folder_status_CMDB
+    
+    - name: Set mstr_duo_version fact
+      set_fact:
+        mstr_duo_version: "{{ duo_folder_status.stat.exists | ternary(duo_version, 'Unknown') }}"
+        cacheable: yes
